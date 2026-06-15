@@ -1,6 +1,7 @@
 package powo
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/tamnd/any-cli/kit"
@@ -23,54 +24,85 @@ func TestDomainInfo(t *testing.T) {
 	}
 }
 
-func TestClassify(t *testing.T) {
-	cases := []struct{ in, typ, id string }{
-		{"wiki/Go", "page", "wiki/Go"},
-		{"/about/", "page", "about"},
-		{"https://" + Host + "/team/contact", "page", "team/contact"},
+func TestClassifyURN(t *testing.T) {
+	input := "urn:lsid:ipni.org:names:30001404-2"
+	typ, id, err := Domain{}.Classify(input)
+	if err != nil {
+		t.Fatalf("Classify(%q) error: %v", input, err)
 	}
-	for _, tc := range cases {
-		typ, id, err := Domain{}.Classify(tc.in)
-		if err != nil || typ != tc.typ || id != tc.id {
-			t.Errorf("Classify(%q) = (%q, %q, %v), want (%q, %q, nil)",
-				tc.in, typ, id, err, tc.typ, tc.id)
-		}
+	if typ != "taxon" {
+		t.Errorf("type = %q, want taxon", typ)
+	}
+	if id != input {
+		t.Errorf("id = %q, want %q", id, input)
+	}
+}
+
+func TestClassifyName(t *testing.T) {
+	typ, id, err := Domain{}.Classify("Acacia")
+	if err != nil {
+		t.Fatalf("Classify(Acacia) error: %v", err)
+	}
+	if typ != "taxon" {
+		t.Errorf("type = %q, want taxon", typ)
+	}
+	if id != "Acacia" {
+		t.Errorf("id = %q, want Acacia", id)
+	}
+}
+
+func TestClassifyEmpty(t *testing.T) {
+	_, _, err := Domain{}.Classify("")
+	if err == nil {
+		t.Error("expected error for empty input")
 	}
 }
 
 func TestLocate(t *testing.T) {
-	got, err := Domain{}.Locate("page", "wiki/Go")
-	want := "https://" + Host + "/wiki/Go"
-	if err != nil || got != want {
-		t.Errorf("Locate = (%q, %v), want (%q, nil)", got, err, want)
+	got, err := Domain{}.Locate("taxon", "urn:lsid:ipni.org:names:30001404-2")
+	if err != nil {
+		t.Fatalf("Locate error: %v", err)
+	}
+	if !strings.Contains(got, "taxon/") {
+		t.Errorf("URL %q does not contain taxon/", got)
 	}
 }
 
-// TestHostWiring mounts the driver in a kit Host (the runtime ant drives) and
-// checks the round trip: a record mints to its URI, its body is readable, and a
-// bare id resolves back to the same URI. The init in domain.go registers the
-// domain, so kit.Open finds it.
+func TestLocateUnknownType(t *testing.T) {
+	_, err := Domain{}.Locate("species", "abc")
+	if err == nil {
+		t.Error("expected error for unknown resource type")
+	}
+}
+
+// TestHostWiring mounts the driver in a kit Host and checks the round trip:
+// a record mints to its URI, and a bare id resolves back to the same URI.
+// The init in domain.go registers the domain, so kit.Open finds it.
 func TestHostWiring(t *testing.T) {
 	h, err := kit.Open()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	p := &Page{ID: "wiki/Go", URL: "https://" + Host + "/wiki/Go", Title: "Go", Body: "Go is a language."}
+	p := &Plant{
+		ID:     "urn:lsid:ipni.org:names:30001404-2",
+		Name:   "Poa",
+		Rank:   "Genus",
+		Family: "Poaceae",
+	}
 	u, err := h.Mint(p)
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
-	if want := "powo://page/wiki/Go"; u.String() != want {
-		t.Errorf("Mint = %q, want %q", u.String(), want)
+	if !strings.HasPrefix(u.String(), "powo://taxon/") {
+		t.Errorf("Mint = %q, want powo://taxon/... prefix", u.String())
 	}
 
-	if body, ok := h.Body(p); !ok || body == "" {
-		t.Errorf("Body = (%q, %v), want non-empty", body, ok)
+	got, err := h.ResolveOn("powo", "urn:lsid:ipni.org:names:30001404-2")
+	if err != nil {
+		t.Fatalf("ResolveOn error: %v", err)
 	}
-
-	got, err := h.ResolveOn("powo", "about")
-	if err != nil || got.String() != "powo://page/about" {
-		t.Errorf("ResolveOn = (%q, %v), want powo://page/about", got.String(), err)
+	if !strings.HasPrefix(got.String(), "powo://taxon/") {
+		t.Errorf("ResolveOn = %q, want powo://taxon/... prefix", got.String())
 	}
 }
